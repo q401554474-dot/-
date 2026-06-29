@@ -6,10 +6,16 @@ import re
 import smtplib
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from email.message import EmailMessage
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+@dataclass(frozen=True)
+class HistoryChange:
+    trade_date: date
+    change_percent: float
 
 
 @dataclass(frozen=True)
@@ -19,19 +25,36 @@ class FundQuote:
     price: float
     change_percent: float
     timestamp: datetime
+    previous_trade_date: date | None = None
+    previous_change_percent: float | None = None
 
     @property
     def direction(self) -> str:
         return "上涨" if self.change_percent >= 0 else "下跌"
 
     @property
+    def previous_change_text(self) -> str:
+        if self.previous_change_percent is None:
+            return "暂无"
+        label = f"{self.previous_trade_date:%Y-%m-%d}" if self.previous_trade_date else "最近净值日"
+        return f"{label} {self.previous_change_percent:+.2f}%"
+
+    @property
     def line(self) -> str:
-        return f"{self.name}({self.code}) {self.change_percent:+.2f}% 当前估值 {self.price:.4f} 时间 {self.timestamp:%Y-%m-%d %H:%M:%S}"
+        return (
+            f"{self.name}({self.code}) "
+            f"今日/当前 {self.change_percent:+.2f}%；"
+            f"昨日/最近净值日 {self.previous_change_text}；"
+            f"当前估值 {self.price:.4f}；"
+            f"更新时间 {self.timestamp:%Y-%m-%d %H:%M:%S}"
+        )
 
     @property
     def alert_message(self) -> str:
         return (
-            f"【基金特殊提醒】{self.name}({self.code}){self.direction}{abs(self.change_percent):.2f}%，"
+            f"【基金特殊提醒】{self.name}({self.code})"
+            f"今日/当前{self.direction}{abs(self.change_percent):.2f}%，"
+            f"昨日/最近净值日 {self.previous_change_text}，"
             f"当前估值 {self.price:.4f}，时间 {self.timestamp:%Y-%m-%d %H:%M:%S}。"
             "仅为行情提醒，不构成投资建议。"
         )
@@ -61,7 +84,10 @@ def main() -> int:
             continue
 
         quotes.append(quote)
-        print(f"- {quote.name}({quote.code}) {quote.change_percent:+.2f}% price={quote.price:.4f}")
+        print(
+            f"- {quote.name}({quote.code}) today={quote.change_percent:+.2f}% "
+            f"previous={quote.previous_change_text} price={quote.price:.4f}"
+        )
         if abs(quote.change_percent) >= threshold:
             alerts.append(quote)
 
@@ -119,18 +145,54 @@ def fetch_fund_quote(code: str, timeout_seconds: int) -> FundQuote:
     if price <= 0:
         raise RuntimeError("fund price is invalid")
 
+    timestamp = parse_time(payload.get("gztime") or payload.get("jzrq"))
+    previous_change = fetch_previous_change(code, timestamp.date(), timeout_seconds)
+
     return FundQuote(
         code=code,
         name=str(payload.get("name") or code),
         price=price,
         change_percent=change_percent,
-        timestamp=parse_time(payload.get("gztime") or payload.get("jzrq")),
+        timestamp=timestamp,
+        previous_trade_date=previous_change.trade_date if previous_change else None,
+        previous_change_percent=previous_change.change_percent if previous_change else None,
     )
+
+
+def fetch_previous_change(code: str, current_date: date, timeout_seconds: int) -> HistoryChange | None:
+    url = f"https://api.fund.eastmoney.com/f10/lsjz?fundCode={code}&pageIndex=1&pageSize=5&startDate=&endDate="
+    request = Request(
+        url,
+        headers={
+            "Referer": "https://fundf10.eastmoney.com/",
+            "User-Agent": "Mozilla/5.0 fund-monitor/1.0",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            text = response.read().decode("utf-8", errors="replace")
+        payload = json.loads(text)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    rows = payload.get("Data", {}).get("LSJZList", [])
+    fallback: HistoryChange | None = None
+    for row in rows:
+        trade_date = parse_date(row.get("FSRQ"))
+        if trade_date is None:
+            continue
+        change = to_float(row.get("JZZZL"))
+        item = HistoryChange(trade_date=trade_date, change_percent=change)
+        if fallback is None:
+            fallback = item
+        if trade_date < current_date:
+            return item
+    return fallback
 
 
 def build_alert_email_body(alerts: list[FundQuote], threshold: float, failures: list[str]) -> str:
     lines = [
-        f"基金特殊提醒：以下基金涨跌幅已达到 {threshold:.2f}% 阈值。",
+        f"基金特殊提醒：以下基金今日/当前涨跌幅已达到 {threshold:.2f}% 阈值。",
         "",
     ]
     for quote in alerts:
@@ -147,8 +209,8 @@ def build_status_email_body(
     failures: list[str],
 ) -> str:
     lines = [
-        f"每日基金状态：共获取到 {len(quotes)} 只基金。",
-        f"特殊提醒阈值：涨跌幅达到 {threshold:.2f}% 。",
+        f"每日全部基金状态：共获取到 {len(quotes)} 只基金。",
+        f"特殊提醒阈值：今日/当前涨跌幅达到 {threshold:.2f}% 。",
         "",
     ]
 
@@ -158,7 +220,7 @@ def build_status_email_body(
             lines.append(quote.alert_message)
         lines.append("")
 
-    lines.append("【全部基金状态】")
+    lines.append("【全部基金状态：今日/当前幅度 + 昨日/最近净值日幅度】")
     if quotes:
         for quote in sorted(quotes, key=lambda item: item.change_percent, reverse=True):
             lines.append(quote.line)
@@ -245,6 +307,13 @@ def parse_time(value: object) -> datetime:
         except ValueError:
             pass
     return datetime.now()
+
+
+def parse_date(value: object) -> date | None:
+    try:
+        return datetime.strptime(str(value or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 if __name__ == "__main__":
