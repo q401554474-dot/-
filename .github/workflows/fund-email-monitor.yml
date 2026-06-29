@@ -2,8 +2,17 @@ name: Fund email monitor
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      report_mode:
+        description: "Run mode"
+        required: true
+        default: "alerts"
+        type: choice
+        options:
+          - alerts
+          - status
 
 jobs:
   monitor:
@@ -20,6 +29,8 @@ jobs:
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       EMAIL_SMTP_SSL: ${{ secrets.EMAIL_SMTP_SSL }}
       EMAIL_SUBJECT: ${{ vars.EMAIL_SUBJECT }}
+      EMAIL_STATUS_SUBJECT: ${{ vars.EMAIL_STATUS_SUBJECT }}
+      REPORT_MODE_INPUT: ${{ github.event.inputs.report_mode }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check funds and send email on threshold
+      - name: Check funds and send email
         shell: bash
         run: |
           set -euo pipefail
@@ -37,5 +48,18 @@ jobs:
           export MONITOR_THRESHOLD="${MONITOR_THRESHOLD:-3}"
           export EMAIL_SMTP_PORT="${EMAIL_SMTP_PORT:-465}"
           export EMAIL_SMTP_SSL="${EMAIL_SMTP_SSL:-true}"
-          export EMAIL_SUBJECT="${EMAIL_SUBJECT:-基金行情提醒}"
+
+          MODE="${REPORT_MODE_INPUT:-alerts}"
+          # GitHub uses UTC time. 05:00 UTC is 13:00 Beijing time.
+          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ] && [ "$(date -u +%H)" = "05" ]; then
+            MODE="status"
+          fi
+          export REPORT_MODE="$MODE"
+
+          if [ "$MODE" = "status" ]; then
+            export EMAIL_SUBJECT="${EMAIL_STATUS_SUBJECT:-每日基金状态}"
+          else
+            export EMAIL_SUBJECT="${EMAIL_SUBJECT:-基金特殊提醒}"
+          fi
+
           python fund_monitor.py
