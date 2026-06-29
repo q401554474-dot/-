@@ -1,0 +1,43 @@
+name: Run fund status now
+
+on:
+  push:
+    paths:
+      - ".github/run-status-now.txt"
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FUND_CODES: ${{ vars.FUND_CODES }}
+      MONITOR_THRESHOLD: ${{ vars.MONITOR_THRESHOLD }}
+      ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+      EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+      EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+      EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
+      EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_SMTP_SSL: ${{ secrets.EMAIL_SMTP_SSL }}
+      EMAIL_SUBJECT: ${{ vars.EMAIL_STATUS_SUBJECT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send full fund status email now
+        shell: bash
+        run: |
+          set -euo pipefail
+          export FUND_CODES="${FUND_CODES:-161725}"
+          export MONITOR_THRESHOLD="${MONITOR_THRESHOLD:-3}"
+          export EMAIL_SMTP_PORT="${EMAIL_SMTP_PORT:-465}"
+          export EMAIL_SMTP_SSL="${EMAIL_SMTP_SSL:-true}"
+          export EMAIL_SUBJECT="${EMAIL_SUBJECT:-每日基金状态}"
+          export REPORT_MODE="status"
+          python fund_monitor.py
