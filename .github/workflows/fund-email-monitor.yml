@@ -3,6 +3,7 @@ name: Fund email monitor
 on:
   schedule:
     - cron: "0 * * * *"
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       report_mode:
@@ -31,6 +32,7 @@ jobs:
       EMAIL_SUBJECT: ${{ vars.EMAIL_SUBJECT }}
       EMAIL_STATUS_SUBJECT: ${{ vars.EMAIL_STATUS_SUBJECT }}
       REPORT_MODE_INPUT: ${{ github.event.inputs.report_mode }}
+      SCHEDULE_CRON: ${{ github.event.schedule }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,8 +53,15 @@ jobs:
 
           MODE="${REPORT_MODE_INPUT:-alerts}"
           # GitHub uses UTC time. 05:00 UTC is 13:00 Beijing time.
-          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ] && [ "$(date -u +%H)" = "05" ]; then
-            MODE="status"
+          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ]; then
+            if [ "${SCHEDULE_CRON:-}" = "0 5 * * *" ]; then
+              MODE="status"
+            elif [ "${SCHEDULE_CRON:-}" = "0 * * * *" ] && [ "$(date -u +%H)" = "05" ]; then
+              echo "Skipping hourly alert at 13:00 Beijing because the daily status schedule handles this time."
+              exit 0
+            else
+              MODE="alerts"
+            fi
           fi
           export REPORT_MODE="$MODE"
 
