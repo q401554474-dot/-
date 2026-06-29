@@ -4,7 +4,6 @@ import json
 import os
 import re
 import smtplib
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,10 +21,17 @@ class FundQuote:
     timestamp: datetime
 
     @property
+    def direction(self) -> str:
+        return "上涨" if self.change_percent >= 0 else "下跌"
+
+    @property
+    def line(self) -> str:
+        return f"{self.name}({self.code}) {self.change_percent:+.2f}% 当前估值 {self.price:.4f} 时间 {self.timestamp:%Y-%m-%d %H:%M:%S}"
+
+    @property
     def alert_message(self) -> str:
-        direction = "上涨" if self.change_percent >= 0 else "下跌"
         return (
-            f"【基金提醒】{self.name}({self.code}){direction}{abs(self.change_percent):.2f}%，"
+            f"【基金特殊提醒】{self.name}({self.code}){self.direction}{abs(self.change_percent):.2f}%，"
             f"当前估值 {self.price:.4f}，时间 {self.timestamp:%Y-%m-%d %H:%M:%S}。"
             "仅为行情提醒，不构成投资建议。"
         )
@@ -37,10 +43,12 @@ def main() -> int:
         print("FUND_CODES is empty. Example: FUND_CODES=161725,025701")
         return 1
 
+    mode = os.getenv("REPORT_MODE", "alerts").strip().lower()
     threshold = env_float("MONITOR_THRESHOLD", 3.0)
     timeout = env_int("REQUEST_TIMEOUT_SECONDS", 10)
 
-    print(f"Checking {len(codes)} fund(s), threshold={threshold}%")
+    print(f"Checking {len(codes)} fund(s), threshold={threshold}%, mode={mode}")
+    quotes: list[FundQuote] = []
     alerts: list[FundQuote] = []
     failures: list[str] = []
 
@@ -52,9 +60,17 @@ def main() -> int:
             print(f"! {code} failed: {exc}")
             continue
 
+        quotes.append(quote)
         print(f"- {quote.name}({quote.code}) {quote.change_percent:+.2f}% price={quote.price:.4f}")
         if abs(quote.change_percent) >= threshold:
             alerts.append(quote)
+
+    if mode in {"status", "all", "daily"}:
+        subject = os.getenv("EMAIL_SUBJECT") or "每日基金状态"
+        body = build_status_email_body(quotes, alerts, threshold, failures)
+        send_email(body, subject)
+        print(f"Daily status email sent for {len(quotes)} fund(s), {len(alerts)} alert(s).")
+        return 0
 
     if not alerts:
         print("No alert: no fund reached the threshold.")
@@ -64,9 +80,10 @@ def main() -> int:
                 print("  " + failure)
         return 0
 
-    body = build_email_body(alerts, threshold, failures)
-    send_email(body)
-    print(f"Email sent for {len(alerts)} alert(s).")
+    subject = os.getenv("EMAIL_SUBJECT") or "基金特殊提醒"
+    body = build_alert_email_body(alerts, threshold, failures)
+    send_email(body, subject)
+    print(f"Alert email sent for {len(alerts)} alert(s).")
     return 0
 
 
@@ -111,28 +128,61 @@ def fetch_fund_quote(code: str, timeout_seconds: int) -> FundQuote:
     )
 
 
-def build_email_body(alerts: list[FundQuote], threshold: float, failures: list[str]) -> str:
+def build_alert_email_body(alerts: list[FundQuote], threshold: float, failures: list[str]) -> str:
     lines = [
-        f"基金涨跌提醒：以下基金涨跌幅已达到 {threshold:.2f}% 阈值。",
+        f"基金特殊提醒：以下基金涨跌幅已达到 {threshold:.2f}% 阈值。",
         "",
     ]
     for quote in alerts:
         lines.append(quote.alert_message)
-    if failures:
-        lines.extend(["", "以下基金本次获取失败："])
-        lines.extend(failures)
-    lines.extend(["", "本邮件由 GitHub Actions 云端定时任务自动发送。"])
+    append_failures(lines, failures)
+    lines.extend(["", "本邮件由 GitHub Actions 云端每小时自动检查发送。"])
     return "\n".join(lines)
 
 
-def send_email(body: str) -> None:
+def build_status_email_body(
+    quotes: list[FundQuote],
+    alerts: list[FundQuote],
+    threshold: float,
+    failures: list[str],
+) -> str:
+    lines = [
+        f"每日基金状态：共获取到 {len(quotes)} 只基金。",
+        f"特殊提醒阈值：涨跌幅达到 {threshold:.2f}% 。",
+        "",
+    ]
+
+    if alerts:
+        lines.append("【达到特殊提醒阈值】")
+        for quote in alerts:
+            lines.append(quote.alert_message)
+        lines.append("")
+
+    lines.append("【全部基金状态】")
+    if quotes:
+        for quote in sorted(quotes, key=lambda item: item.change_percent, reverse=True):
+            lines.append(quote.line)
+    else:
+        lines.append("本次没有成功获取到基金状态。")
+
+    append_failures(lines, failures)
+    lines.extend(["", "本邮件由 GitHub Actions 云端每日 13:00（北京时间）自动发送。"])
+    return "\n".join(lines)
+
+
+def append_failures(lines: list[str], failures: list[str]) -> None:
+    if failures:
+        lines.extend(["", "以下基金本次获取失败："])
+        lines.extend(failures)
+
+
+def send_email(body: str, subject: str) -> None:
     host = required_env("EMAIL_SMTP_HOST")
     port = env_int("EMAIL_SMTP_PORT", 465)
     user = required_env("EMAIL_SMTP_USER")
     password = required_env("EMAIL_SMTP_PASSWORD")
     to_email = required_env("ALERT_TO_EMAIL")
     from_email = os.getenv("EMAIL_FROM") or user
-    subject = os.getenv("EMAIL_SUBJECT", "基金行情提醒")
     use_ssl = env_bool("EMAIL_SMTP_SSL", True)
 
     email = EmailMessage()
