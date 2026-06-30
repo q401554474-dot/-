@@ -426,27 +426,84 @@ def fund_card(fund: Fund, benchmark: Benchmark | None, threshold: float, compact
     suggestion = suggest(fund, benchmark, threshold)
     border = "#d93025" if important else "#d8dee4"
     bg = "#fff5f5" if important else "#fff"
-    badge = '<span style="margin-left:6px;padding:2px 7px;background:#d93025;color:#fff;border-radius:999px;font-size:12px;">重点提醒</span>' if important else ""
-    details = "" if compact else f"""
-      <div>当前估值：<strong>{fund.price:.4f}</strong></div>
-      <div style="color:#57606a;">更新时间：{fund.ts:%Y-%m-%d %H:%M:%S}</div>
-      <div style="margin-top:7px;">本基金近四日：{escape(fund.four_day_text)}</div>
-      <div>近四日对比：{escape(fund.four_day_compare)}</div>
-      <div>科技基准对比：{escape(benchmark_compare(fund, benchmark))}</div>
-    """
+    badge = (
+        '<span style="display:inline-block;margin-left:6px;padding:2px 7px;'
+        'background:#d93025;color:#fff;border-radius:999px;font-size:12px;vertical-align:middle;">重点提醒</span>'
+        if important
+        else ""
+    )
+    details = "" if compact else fund_card_details(fund, benchmark)
     return f"""
-    <div style="margin:0 0 11px;padding:12px 13px;border:1px solid {border};background:{bg};border-radius:8px;line-height:1.75;word-break:break-word;">
-      <div style="font-weight:700;">{escape(fund.name)}（{escape(fund.code)}）{badge}</div>
-      <div style="margin-top:4px;font-size:20px;font-weight:700;color:{change_color(fund.pct, threshold)};">
-        {fmt_pct(fund.pct)} <span style="font-size:13px;color:#57606a;font-weight:400;">{escape(fund.direction)}</span>
+    <div style="margin:0 0 12px;padding:0;border:1px solid {border};background:{bg};border-radius:8px;overflow:hidden;line-height:1.65;word-break:break-word;">
+      <div style="padding:12px 13px;border-bottom:1px solid #e5e7eb;background:#f6f8fa;">
+        <div style="font-size:15px;font-weight:700;color:#1f2328;">{escape(fund.name)}{badge}</div>
+        <div style="font-size:12px;color:#57606a;margin-top:2px;">基金代码：{escape(fund.code)}</div>
       </div>
-      {details}
-      <div style="margin-top:8px;padding:9px 10px;background:#fff8e1;border:1px solid #f0d98c;border-radius:6px;">
-        操作参考：<strong>{escape(suggestion.action)}</strong><br>
-        <span style="color:#5f4b00;">{escape(suggestion.reason)}</span>
+
+      <div style="padding:12px 13px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+          <tr>
+            <td style="width:50%;padding:0 8px 8px 0;vertical-align:top;">
+              <div style="font-size:12px;color:#57606a;">今日/当前涨跌</div>
+              <div style="font-size:22px;font-weight:700;color:{change_color(fund.pct, threshold)};">{fmt_pct(fund.pct)}</div>
+              <div style="font-size:13px;color:#57606a;">{escape(fund.direction)}</div>
+            </td>
+            <td style="width:50%;padding:0 0 8px 8px;vertical-align:top;">
+              <div style="font-size:12px;color:#57606a;">当前估值</div>
+              <div style="font-size:18px;font-weight:700;color:#1f2328;">{fund.price:.4f}</div>
+              <div style="font-size:12px;color:#57606a;">{fund.ts:%Y-%m-%d %H:%M}</div>
+            </td>
+          </tr>
+        </table>
+
+        <div style="margin-top:4px;padding-top:10px;border-top:1px solid #e5e7eb;">
+          <div style="font-size:12px;font-weight:700;color:#57606a;margin-bottom:6px;">近四日走势</div>
+          {change_pills(fund.changes)}
+        </div>
+
+        {details}
+
+        <div style="margin-top:10px;padding:10px;background:#fff8e1;border:1px solid #f0d98c;border-radius:6px;">
+          <div style="font-size:12px;font-weight:700;color:#7a5b00;margin-bottom:4px;">操作参考</div>
+          <div style="font-size:15px;font-weight:700;color:#1f2328;">{escape(suggestion.action)}</div>
+          <div style="font-size:13px;color:#5f4b00;margin-top:4px;">{escape(suggestion.reason)}</div>
+        </div>
       </div>
     </div>
     """
+
+
+def fund_card_details(fund: Fund, benchmark: Benchmark | None) -> str:
+    return f"""
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb;">
+          <div style="font-size:12px;font-weight:700;color:#57606a;margin-bottom:6px;">对比分析</div>
+          {info_box("本基金近四日", fund.four_day_compare)}
+          {info_box("科技基准对比", benchmark_compare(fund, benchmark))}
+        </div>
+    """
+
+
+def info_box(label: str, value: str) -> str:
+    return f"""
+    <div style="margin:0 0 7px 0;padding:9px 10px;background:#f6f8fa;border:1px solid #e5e7eb;border-radius:6px;">
+      <div style="font-size:12px;color:#57606a;margin-bottom:2px;">{escape(label)}</div>
+      <div style="font-size:13px;color:#1f2328;">{escape(value)}</div>
+    </div>
+    """
+
+
+def change_pills(changes: tuple[Change, ...]) -> str:
+    if not changes:
+        return '<div style="font-size:13px;color:#57606a;">暂无近四日数据</div>'
+    return "".join(
+        f"""
+        <span style="display:inline-block;margin:0 6px 6px 0;padding:6px 8px;border:1px solid #d8dee4;border-radius:6px;background:#fff;white-space:nowrap;">
+          <span style="font-size:12px;color:#57606a;">{item.day:%m-%d}</span>
+          <span style="font-size:13px;font-weight:700;color:{small_color(item.pct)};margin-left:4px;">{fmt_pct(item.pct)}</span>
+        </span>
+        """
+        for item in changes
+    )
 
 
 def suggest(fund: Fund, benchmark: Benchmark | None, threshold: float) -> Suggestion:
