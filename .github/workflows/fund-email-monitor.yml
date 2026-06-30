@@ -18,10 +18,12 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
       FUND_CODES: ${{ vars.FUND_CODES }}
       MONITOR_THRESHOLD: ${{ vars.MONITOR_THRESHOLD }}
+      TECH_BENCHMARK_CODE: ${{ vars.TECH_BENCHMARK_CODE }}
+      TECH_BENCHMARK_NAME: ${{ vars.TECH_BENCHMARK_NAME }}
       ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
       EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
       EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
@@ -48,6 +50,8 @@ jobs:
           set -euo pipefail
           export FUND_CODES="${FUND_CODES:-161725}"
           export MONITOR_THRESHOLD="${MONITOR_THRESHOLD:-3}"
+          export TECH_BENCHMARK_CODE="${TECH_BENCHMARK_CODE:-sh000688}"
+          export TECH_BENCHMARK_NAME="${TECH_BENCHMARK_NAME:-科创50指数}"
           export EMAIL_SMTP_PORT="${EMAIL_SMTP_PORT:-465}"
           export EMAIL_SMTP_SSL="${EMAIL_SMTP_SSL:-true}"
 
